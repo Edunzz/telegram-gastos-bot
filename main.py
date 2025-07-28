@@ -17,8 +17,8 @@ async def telegram_webhook(req: Request):
     chat_id = data["message"]["chat"]["id"]
     text = data["message"].get("text", "")
 
-    # Respuesta simple
-    await httpx.post(f"{BASE_URL}/sendMessage", json={
+    # Respuesta simple (sin await)
+    httpx.post(f"{BASE_URL}/sendMessage", json={
         "chat_id": chat_id,
         "text": f"📩 Recibí tu mensaje: {text}"
     })
