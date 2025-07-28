@@ -1,182 +1,112 @@
-from fastapi import FastAPI, Request
-import httpx
 import os
-import json
 import logging
+from fastapi import FastAPI, Request
 from pymongo import MongoClient
+from dotenv import load_dotenv
 from datetime import datetime
+from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+import certifi
 
-# Inicializar logging
+load_dotenv()
+
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("main")
 
-# FastAPI
 app = FastAPI()
 
-# Variables de entorno
-TOKEN = os.getenv("BOT_TOKEN")
-BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = "mistralai/mistral-7b-instruct"
 MONGO_URI = os.getenv("MONGO_URI")
+mongo_client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
+db = mongo_client["telegram_gastos"]
+movimientos = db["movimientos"]
 
-# Conexión a MongoDB
-try:
-    mongo_client = MongoClient(MONGO_URI)
-    db = mongo_client["gastos_bot"]
-    movimientos = db["movimientos"]
-    logger.info("✅ Conexión a MongoDB establecida correctamente.")
-except Exception as e:
-    logger.error(f"❌ Error al conectar a MongoDB: {e}")
+class TelegramMessage(BaseModel):
+    message: dict
 
-# Categorías válidas
-CATEGORIAS_VALIDAS = [
-    "salud", "limpieza", "alimentacion", "transporte",
-    "salidas", "ropa", "plantas", "arreglos casa", "vacaciones"
-]
-
-# -----------------------------
-# Funciones de utilidad
-# -----------------------------
-
-def es_reporte(texto: str):
-    texto = texto.lower()
-    for categoria in CATEGORIAS_VALIDAS:
-        if categoria in texto and any(pal in texto for pal in ["reporte", "estado", "saldo", "cuánto"]):
-            return categoria
-    if "reporte" in texto and any(pal in texto for pal in ["todo", "general", "categorías"]):
-        return "general"
-    return None
-
-def procesar_con_openrouter(texto_usuario: str):
-    prompt = f"""
-Extrae el monto y la categoría de gasto desde el siguiente texto. La categoría debe estar dentro del siguiente listado: salud, limpieza, alimentacion, transporte, salidas, ropa, plantas, arreglos casa, vacaciones.
-
-Si el texto indica que se debe agregar dinero, el monto debe ser positivo.
-Si el texto indica que se debe resetear, el monto debe ser 0.
-Si el texto indica que es un gasto, el monto debe ser negativo.
-
-Devuelve solo un JSON con las claves: "monto" (número) y "categoria" (texto exacto del listado). Nada más.
-
-Texto: "{texto_usuario}"
-"""
-    try:
-        response = httpx.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            json={
-                "model": OPENROUTER_MODEL,
-                "messages": [{"role": "user", "content": prompt}]
-            },
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            timeout=20
-        )
-        response.raise_for_status()
-        resultado = response.json()
-        contenido = resultado["choices"][0]["message"]["content"]
-        logger.info(f"📩 OpenRouter respondió: {contenido}")
-        return json.loads(contenido)
-    except Exception as e:
-        logger.error(f"❌ Error al procesar con OpenRouter: {e}")
-        return {"error": str(e)}
-
-def guardar_movimiento(categoria, monto, concepto, chat_id):
-    doc = {
-        "categoria": categoria,
-        "monto": monto,
-        "concepto": concepto,
+def guardar_movimiento(chat_id, tipo, monto, categoria):
+    movimientos.insert_one({
         "chat_id": chat_id,
+        "tipo": tipo,
+        "monto": monto,
+        "categoria": categoria,
         "fecha": datetime.utcnow()
-    }
-    movimientos.insert_one(doc)
-    logger.info(f"✅ Movimiento guardado: {doc}")
+    })
+    logger.info(f"💾 Guardado: {tipo} {monto} en {categoria} (chat {chat_id})")
 
 def obtener_saldo(categoria, chat_id):
     pipeline = [
-        {"$match": {"categoria": categoria, "chat_id": chat_id}},
-        {"$group": {"_id": "$categoria", "total": {"$sum": "$monto"}}}
+        {"$match": {"chat_id": chat_id, "categoria": categoria}},
+        {"$group": {
+            "_id": "$tipo",
+            "total": {"$sum": "$monto"}
+        }}
     ]
     result = list(movimientos.aggregate(pipeline))
-    total = result[0]["total"] if result else 0
-    logger.info(f"💰 Saldo de '{categoria}' para chat {chat_id}: {total}")
-    return total
+    ingresos = sum(item["total"] for item in result if item["_id"] == "ingreso")
+    gastos = sum(item["total"] for item in result if item["_id"] == "gasto")
+    return ingresos - gastos
 
 def obtener_reporte_general(chat_id):
     pipeline = [
         {"$match": {"chat_id": chat_id}},
-        {"$group": {"_id": "$categoria", "total": {"$sum": "$monto"}}}
+        {"$group": {
+            "_id": {"categoria": "$categoria", "tipo": "$tipo"},
+            "total": {"$sum": "$monto"}
+        }}
     ]
     result = list(movimientos.aggregate(pipeline))
-    logger.info(f"📊 Reporte general generado para chat {chat_id}")
-    return {r["_id"]: r["total"] for r in result}
+    saldos = {}
+    for item in result:
+        categoria = item["_id"]["categoria"]
+        tipo = item["_id"]["tipo"]
+        saldos.setdefault(categoria, {"ingreso": 0, "gasto": 0})
+        saldos[categoria][tipo] += item["total"]
 
-# -----------------------------
-# Endpoints
-# -----------------------------
+    mensaje = "📊 Reporte general:\n"
+    for categoria, valores in saldos.items():
+        saldo = valores["ingreso"] - valores["gasto"]
+        mensaje += f"• {categoria}: {saldo:.2f}\n"
+    return mensaje
 
-@app.get("/")
-async def root():
-    return {"message": "Bot activo con MongoDB y OpenRouter"}
-
-@app.post(f"/{TOKEN}")
+@app.post("/")
 async def telegram_webhook(req: Request):
-    data = await req.json()
-    chat_id = data["message"]["chat"]["id"]
-    text = data["message"].get("text", "")
-    logger.info(f"💬 Mensaje recibido: {text}")
-
     try:
-        categoria_reporte = es_reporte(text)
+        body = await req.json()
+        message = body.get("message", {})
+        chat_id = message["chat"]["id"]
+        text = message.get("text", "").strip()
 
-        if categoria_reporte == "general":
-            saldos = obtener_reporte_general(chat_id)
-            if not saldos:
-                respuesta = "📉 No hay movimientos registrados aún."
-            else:
-                respuesta = "📊 *Reporte general:*\n" + "\n".join(
-                    f"- {cat}: {round(saldos.get(cat, 0), 2)} soles"
-                    for cat in CATEGORIAS_VALIDAS if cat in saldos
-                )
+        if not text:
+            return JSONResponse(content={})
 
-        elif categoria_reporte:
+        if text.startswith("+") or text.startswith("-"):
+            signo = text[0]
+            monto_categoria = text[1:].strip().split(" ")
+            if len(monto_categoria) < 2:
+                return JSONResponse(content={})
+
+            monto = float(monto_categoria[0])
+            categoria = " ".join(monto_categoria[1:]).lower()
+            tipo = "ingreso" if signo == "+" else "gasto"
+
+            guardar_movimiento(chat_id, tipo, monto, categoria)
+            saldo = obtener_saldo(categoria, chat_id)
+
+            respuesta = f"✅ {tipo.title()} de S/ {monto:.2f} registrado en '{categoria}'.\n💰 Saldo actual en '{categoria}': S/ {saldo:.2f}"
+            return {"method": "sendMessage", "chat_id": chat_id, "text": respuesta}
+
+        elif text.lower().startswith("reporte de "):
+            categoria_reporte = text.lower().replace("reporte de ", "").strip()
             saldo = obtener_saldo(categoria_reporte, chat_id)
-            respuesta = f"📊 *Saldo actual de `{categoria_reporte}`:* {round(saldo, 2)} soles"
+            return {"method": "sendMessage", "chat_id": chat_id, "text": f"💼 Saldo en '{categoria_reporte}': S/ {saldo:.2f}"}
+
+        elif text.lower() in ["reporte", "reporte general", "todo"]:
+            reporte = obtener_reporte_general(chat_id)
+            return {"method": "sendMessage", "chat_id": chat_id, "text": reporte}
 
         else:
-            resultado = procesar_con_openrouter(text)
-
-            if "error" in resultado or resultado.get("categoria") not in CATEGORIAS_VALIDAS:
-                respuesta = (
-                    "⚠️ No pude interpretar tu mensaje correctamente.\n"
-                    "Incluye un monto y una categoría válida.\n"
-                    "Categorías disponibles:\n" + "\n".join(f"- {c}" for c in CATEGORIAS_VALIDAS)
-                )
-            else:
-                categoria = resultado["categoria"]
-                monto = resultado["monto"]
-                guardar_movimiento(categoria, monto, text, chat_id)
-                saldo = obtener_saldo(categoria, chat_id)
-
-                respuesta = (
-                    f"🧾 *Movimiento guardado:*\n"
-                    f"- 💸 Monto: {monto} soles\n"
-                    f"- 🗂️ Categoría: {categoria}\n"
-                    f"📌 *Saldo actual:* {round(saldo, 2)} soles"
-                )
-
-        httpx.post(f"{BASE_URL}/sendMessage", json={
-            "chat_id": chat_id,
-            "text": respuesta,
-            "parse_mode": "Markdown"
-        })
+            return {"method": "sendMessage", "chat_id": chat_id, "text": "🤖 Usa +monto categoria para ingresos, -monto categoria para gastos, o pide 'reporte de comida' o 'reporte general'."}
 
     except Exception as e:
-        logger.error(f"❌ Error inesperado: {e}")
-        httpx.post(f"{BASE_URL}/sendMessage", json={
-            "chat_id": chat_id,
-            "text": "❌ Ocurrió un error al procesar tu mensaje. Intenta nuevamente.",
-        })
-
-    return {"ok": True}
+        logger.exception("❌ Error inesperado")
+        return JSONResponse(content={"error": "Error interno"}, status_code=500)
