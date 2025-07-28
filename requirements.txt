@@ -1,4 +1,5 @@
 fastapi
-httpx
-pymongo[srv]
 uvicorn
+pymongo[srv]
+python-dotenv
+certifi
