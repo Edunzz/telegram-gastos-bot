@@ -1,5 +1,5 @@
-fastapi
-uvicorn
-pymongo[srv]
-python-dotenv
-certifi
+fastapi==0.111.0
+uvicorn==0.30.1
+pymongo[srv]==4.7.2
+python-dotenv==1.0.1
+certifi==2024.6.2
