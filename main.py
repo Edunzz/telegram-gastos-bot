@@ -1,40 +1,78 @@
 import os
+import json
 import logging
 from fastapi import FastAPI, Request
 from pymongo import MongoClient
-from dotenv import load_dotenv
 from datetime import datetime
-from pydantic import BaseModel
 from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
 import certifi
 import httpx
 
-# Cargar .env
 load_dotenv()
 
-# Logger
-logging.basicConfig(level=logging.DEBUG)
+app = FastAPI()
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bot")
 
-# App FastAPI
-app = FastAPI()
-
-# Variables de entorno
-MONGO_URI = os.getenv("MONGO_URI")
+# === Variables de entorno ===
 TOKEN = os.getenv("BOT_TOKEN")
+MONGO_URI = os.getenv("MONGO_URI")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "mistralai/mistral-7b-instruct")
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
-# MongoDB client
-mongo_client = MongoClient(MONGO_URI, tlsCAFile=certifi.where(), serverSelectionTimeoutMS=60000, socketTimeoutMS=60000)
-db = mongo_client["telegram_gastos"]
-movimientos = db["movimientos"]
-
-# Categorías válidas
+# === Categorías válidas ===
 CATEGORIAS_VALIDAS = [
     "salud", "limpieza", "alimentacion", "transporte",
     "salidas", "ropa", "plantas", "arreglos casa", "vacaciones"
 ]
 
+# === MongoDB ===
+mongo_client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
+db = mongo_client["telegram_gastos"]
+movimientos = db["movimientos"]
+
+# === Procesamiento con modelo ===
+def procesar_con_openrouter(texto_usuario: str):
+    prompt = f"""
+Extrae el monto y la categoría de gasto desde el siguiente texto. La categoría debe estar dentro del siguiente listado: salud, limpieza, alimentacion, transporte, salidas, ropa, plantas, arreglos casa, vacaciones.
+
+Si el texto indica que se debe agregar dinero, el monto debe ser positivo.
+Si el texto indica que se debe resetear, el monto debe ser 0.
+Si el texto indica que es un gasto, el monto debe ser negativo.
+
+Devuelve solo un JSON con las claves: "monto" (número) y "categoria" (texto exacto del listado). Nada más.
+
+Texto: "{texto_usuario}"
+"""
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://tubot.com"
+    }
+
+    body = {
+        "model": OPENROUTER_MODEL,
+        "messages": [{"role": "user", "content": prompt}]
+    }
+
+    try:
+        response = httpx.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=body,
+            timeout=30
+        )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+        return json.loads(content)
+    except Exception as e:
+        logger.exception("❌ Error en OpenRouter:")
+        return {"error": str(e), "raw": content if 'content' in locals() else ""}
+
+# === Guardar en Mongo ===
 def guardar_movimiento(chat_id, tipo, monto, categoria, mensaje_original):
     movimientos.insert_one({
         "chat_id": chat_id,
@@ -44,7 +82,7 @@ def guardar_movimiento(chat_id, tipo, monto, categoria, mensaje_original):
         "mensaje_original": mensaje_original,
         "fecha": datetime.utcnow()
     })
-    logger.info(f"💾 Guardado: {tipo} S/ {monto} en {categoria} (chat {chat_id})")
+    logger.info(f"💾 Guardado: {tipo} S/ {monto} en {categoria} ({chat_id})")
 
 def obtener_saldo(categoria, chat_id):
     pipeline = [
@@ -75,15 +113,16 @@ def obtener_reporte_general(chat_id):
         mensaje += f"• {cat}: S/ {saldo:.2f}\n"
     return mensaje
 
+# === Rutas ===
 @app.get("/")
 async def root():
-    return {"message": "Bot activo con MongoDB y Telegram ✅"}
+    return {"message": "Bot activo con MongoDB y OpenRouter ✅"}
 
 @app.post(f"/{TOKEN}")
 async def telegram_webhook(req: Request):
     try:
         body = await req.json()
-        logger.debug(f"📩 Recibido: {body}")
+        logger.info(f"📩 Mensaje recibido: {body}")
 
         chat_id = body["message"]["chat"]["id"]
         text = body["message"].get("text", "").strip()
@@ -91,27 +130,8 @@ async def telegram_webhook(req: Request):
         if not text:
             return {"ok": True}
 
-        if text.startswith("+") or text.startswith("-"):
-            signo = text[0]
-            partes = text[1:].strip().split(" ")
-            if len(partes) < 2:
-                msg = "❌ Usa +monto categoría (ej: +30 comida)"
-            else:
-                try:
-                    monto = float(partes[0])
-                    categoria = " ".join(partes[1:]).lower()
-                    if categoria not in CATEGORIAS_VALIDAS:
-                        msg = f"❌ Categoría inválida. Usa: {', '.join(CATEGORIAS_VALIDAS)}"
-                    else:
-                        tipo = "ingreso" if signo == "+" else "gasto"
-                        guardar_movimiento(chat_id, tipo, monto, categoria, text)
-                        saldo = obtener_saldo(categoria, chat_id)
-                        msg = (
-                            f"✅ {tipo.title()} de S/ {monto:.2f} registrado en '{categoria}'.\n"
-                            f"💰 Saldo actual en '{categoria}': S/ {saldo:.2f}"
-                        )
-                except Exception:
-                    msg = "❌ Monto inválido. Usa: +30 comida"
+        if text.lower() in ["reporte", "reporte general", "todo"]:
+            msg = obtener_reporte_general(chat_id)
         elif text.lower().startswith("reporte de "):
             categoria = text.lower().replace("reporte de ", "").strip()
             if categoria not in CATEGORIAS_VALIDAS:
@@ -119,11 +139,26 @@ async def telegram_webhook(req: Request):
             else:
                 saldo = obtener_saldo(categoria, chat_id)
                 msg = f"💼 Saldo en '{categoria}': S/ {saldo:.2f}"
-        elif text.lower() in ["reporte", "reporte general", "todo"]:
-            msg = obtener_reporte_general(chat_id)
         else:
-            msg = "🤖 Usa:\n+50 comida\n-20 transporte\n'reporte de comida'\n'reporte general'"
+            resultado = procesar_con_openrouter(text)
+            if "error" in resultado or resultado.get("categoria") not in CATEGORIAS_VALIDAS:
+                msg = (
+                    "⚠️ No pude interpretar tu mensaje correctamente.\n"
+                    "Ejemplo: 'gasté 30 en transporte' o 'ahorré 50 para salud'\n"
+                    "Categorías válidas:\n" + "\n".join(f"- {c}" for c in CATEGORIAS_VALIDAS)
+                )
+            else:
+                monto = resultado["monto"]
+                categoria = resultado["categoria"]
+                tipo = "ingreso" if monto >= 0 else "gasto"
+                guardar_movimiento(chat_id, tipo, abs(monto), categoria, text)
+                saldo = obtener_saldo(categoria, chat_id)
+                msg = (
+                    f"✅ {tipo.title()} de S/ {abs(monto):.2f} registrado en '{categoria}'.\n"
+                    f"💰 Saldo actual en '{categoria}': S/ {saldo:.2f}"
+                )
 
+        # Enviar respuesta
         httpx.post(f"{BASE_URL}/sendMessage", json={
             "chat_id": chat_id,
             "text": msg
@@ -131,5 +166,5 @@ async def telegram_webhook(req: Request):
         return {"ok": True}
 
     except Exception as e:
-        logger.exception("❌ Error en el webhook:")
+        logger.exception("❌ Error inesperado:")
         return JSONResponse(status_code=500, content={"error": str(e)})
