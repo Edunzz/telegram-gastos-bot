@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query
 from pymongo import MongoClient
 from datetime import datetime
 from fastapi.responses import JSONResponse
@@ -168,3 +168,23 @@ async def telegram_webhook(req: Request):
     except Exception as e:
         logger.exception("❌ Error inesperado:")
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.get("/exportar")
+async def exportar_data(clave: str = Query(...), desde: str = None, hasta: str = None):
+    # Protege el endpoint con clave
+    CLAVE_CORRECTA = os.getenv("EXPORT_PASS", "miclave123")
+    if clave != CLAVE_CORRECTA:
+        return JSONResponse(status_code=401, content={"error": "No autorizado"})
+
+    # Filtrar por fechas si se pasan
+    query = {}
+    if desde or hasta:
+        try:
+            desde_dt = datetime.strptime(desde, "%Y-%m-%d") if desde else datetime.min
+            hasta_dt = datetime.strptime(hasta, "%Y-%m-%d") if hasta else datetime.max
+            query["fecha"] = {"$gte": desde_dt, "$lte": hasta_dt}
+        except:
+            return JSONResponse(status_code=400, content={"error": "Formato de fecha inválido. Usa YYYY-MM-DD"})
+
+    docs = list(movimientos.find(query, {"_id": 0}))  # omite el _id
+    return JSONResponse(content=docs)
