@@ -39,10 +39,11 @@ movimientos = db["movimientos"]
 # === Procesamiento con modelo ===
 def procesar_con_openrouter(texto_usuario: str):
     prompt = f"""
-Extrae el monto y la categoría de gasto desde el siguiente texto. La categoría debe estar dentro del siguiente listado: salud, limpieza, alimentacion, transporte, salidas, ropa, plantas, arreglos casa, vacaciones.
+Extrae el monto y la categoría de gasto desde el siguiente texto. 
+La categoría debe estar dentro del siguiente listado: salud, limpieza, alimentacion, transporte, salidas, ropa, plantas, arreglos casa, vacaciones.
+Nota: Si se recibe una palabra con errores ortográficos o con tilde (por ejemplo, alimentación), esta debe normalizarse eliminando las tildes y considerarse como alimentacion, a fin de coincidir con las categorías predefinidas. El objetivo es asegurar una correcta categorización aunque la palabra no esté escrita con exactitud ortográfica.
 
 Si el texto indica que se debe agregar dinero, el monto debe ser positivo.
-Si el texto indica que se debe resetear, el monto debe ser 0.
 Si el texto indica que es un gasto, el monto debe ser negativo.
 
 Devuelve solo un JSON con las claves: "monto" (número) y "categoria" (texto exacto del listado). Nada más.
