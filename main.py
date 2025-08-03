@@ -6,6 +6,7 @@ from pymongo import MongoClient
 from datetime import datetime
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
+from dateutil import parser
 from datetime import datetime
 from dotenv import load_dotenv
 import certifi
@@ -173,27 +174,23 @@ async def telegram_webhook(req: Request):
 
 @app.get("/exportar")
 async def exportar_data(clave: str = Query(...), desde: str = None, hasta: str = None):
-    # Protege el endpoint con clave
     CLAVE_CORRECTA = os.getenv("EXPORT_PASS", "0000")
     if clave != CLAVE_CORRECTA:
         return JSONResponse(status_code=401, content={"error": "No autorizado"})
 
-    # Construye el filtro por fechas si se pasa
     query = {}
     if desde or hasta:
         try:
-            desde_dt = datetime.strptime(desde, "%Y-%m-%d") if desde else datetime.min
-            hasta_dt = datetime.strptime(hasta, "%Y-%m-%d") if hasta else datetime.max
+            desde_dt = parser.parse(desde) if desde else datetime.min
+            hasta_dt = parser.parse(hasta) if hasta else datetime.max
             query["fecha"] = {"$gte": desde_dt, "$lte": hasta_dt}
-        except:
-            return JSONResponse(status_code=400, content={"error": "Formato de fecha inválido. Usa YYYY-MM-DD"})
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": "Formato de fecha inválido. Usa YYYY-MM-DD o YYYY-MM-DDTHH:MM:SS"})
 
-    # Buscar en Mongo
     docs = list(movimientos.find(query, {"_id": 0}))
-
-    # Formatear datetime a string
     for doc in docs:
         if "fecha" in doc and isinstance(doc["fecha"], datetime):
             doc["fecha"] = doc["fecha"].strftime("%Y-%m-%d %H:%M:%S")
 
     return JSONResponse(content=jsonable_encoder(docs))
+
