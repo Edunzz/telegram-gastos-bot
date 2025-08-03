@@ -5,6 +5,8 @@ from fastapi import FastAPI, Request, Query
 from pymongo import MongoClient
 from datetime import datetime
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+from datetime import datetime
 from dotenv import load_dotenv
 import certifi
 import httpx
@@ -176,7 +178,7 @@ async def exportar_data(clave: str = Query(...), desde: str = None, hasta: str =
     if clave != CLAVE_CORRECTA:
         return JSONResponse(status_code=401, content={"error": "No autorizado"})
 
-    # Filtrar por fechas si se pasan
+    # Construye el filtro por fechas si se pasa
     query = {}
     if desde or hasta:
         try:
@@ -186,5 +188,12 @@ async def exportar_data(clave: str = Query(...), desde: str = None, hasta: str =
         except:
             return JSONResponse(status_code=400, content={"error": "Formato de fecha inválido. Usa YYYY-MM-DD"})
 
-    docs = list(movimientos.find(query, {"_id": 0}))  # omite el _id
-    return JSONResponse(content=docs)
+    # Buscar en Mongo
+    docs = list(movimientos.find(query, {"_id": 0}))
+
+    # Formatear datetime a string
+    for doc in docs:
+        if "fecha" in doc and isinstance(doc["fecha"], datetime):
+            doc["fecha"] = doc["fecha"].strftime("%Y-%m-%d %H:%M:%S")
+
+    return JSONResponse(content=jsonable_encoder(docs))
