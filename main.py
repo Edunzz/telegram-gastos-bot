@@ -172,7 +172,7 @@ async def telegram_webhook(req: Request):
 @app.get("/exportar")
 async def exportar_data(clave: str = Query(...), desde: str = None, hasta: str = None):
     # Protege el endpoint con clave
-    CLAVE_CORRECTA = os.getenv("EXPORT_PASS", "miclave123")
+    CLAVE_CORRECTA = os.getenv("EXPORT_PASS", "0000")
     if clave != CLAVE_CORRECTA:
         return JSONResponse(status_code=401, content={"error": "No autorizado"})
 
