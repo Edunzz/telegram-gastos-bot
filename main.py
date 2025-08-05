@@ -69,7 +69,11 @@ def procesar_con_openrouter(texto_usuario: str):
         response = httpx.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=body, timeout=30)
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
-        return json.loads(content)
+        match = re.search(r'\{.*?\}', content, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        else:
+            raise ValueError("❌ No se encontró JSON válido en la respuesta.")
     except Exception as e:
         logger.exception("❌ Error en OpenRouter:")
         return {"error": str(e)}
