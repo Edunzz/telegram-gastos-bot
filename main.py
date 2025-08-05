@@ -39,15 +39,12 @@ movimientos = db["movimientos"]
 # === Procesamiento con modelo ===
 def procesar_con_openrouter(texto_usuario: str):
     prompt = f"""
-Extrae el monto y la categoría de gasto desde el siguiente texto. 
-La categoría debe estar dentro del siguiente listado: salud, limpieza, alimentacion, transporte, salidas, ropa, plantas, arreglos casa, vacaciones.
-Nota: Si se recibe una palabra con errores ortográficos o con tilde (por ejemplo, alimentación), esta debe normalizarse eliminando las tildes y considerarse como alimentacion, a fin de coincidir con las categorías predefinidas. El objetivo es asegurar una correcta categorización aunque la palabra no esté escrita con exactitud ortográfica.
+Extrae el tipo, monto y la categoría desde el siguiente texto con las siguientes indicaciones. 
+El tipo siempre debe ser gasto por defecto a menos que el texto indica que se debe agregar (o cualquier sinonimo de adicionar).
+El monto siempre debe positivo
+La categoría debe estar dentro del siguiente listado: salud, limpieza, alimentacion, transporte, salidas, ropa, plantas, arreglos casa, vacaciones. Nota: Si se recibe una palabra con errores ortográficos o con tilde (por ejemplo, alimentación), esta debe normalizarse eliminando las tildes y considerarse como alimentacion, a fin de coincidir con las categorías predefinidas. El objetivo es asegurar una correcta categorización aunque la palabra no esté escrita con exactitud ortográfica.
 
-Si el texto indica que se debe agregar dinero, el monto debe ser positivo.
-Si el texto indica que es un gasto, el monto debe ser negativo.
-
-Devuelve solo un JSON con las claves: "monto" (número) y "categoria" (texto exacto del listado). Nada más.
-
+Devuelve solo un JSON con las claves: "tipo" (texto gasto o ingreso), "monto" (número), "categoria" (texto exacto del listado) y . Nada más.
 Texto: "{texto_usuario}"
 """
 
@@ -160,7 +157,7 @@ async def telegram_webhook(req: Request):
             else:
                 monto = resultado["monto"]
                 categoria = resultado["categoria"]
-                tipo = "ingreso" if monto >= 0 else "gasto"
+                tipo = resultado["tipo"]
                 guardar_movimiento(chat_id, tipo, abs(monto), categoria, text)
                 saldo = obtener_saldo(categoria, chat_id)
                 msg = (
