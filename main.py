@@ -10,6 +10,7 @@ from dateutil import parser
 from dotenv import load_dotenv
 import certifi
 import httpx
+from bson import ObjectId
 
 load_dotenv()
 
@@ -44,7 +45,7 @@ El tipo siempre debe ser gasto por defecto a menos que el texto indica que se de
 El monto siempre debe positivo
 La categoría debe estar dentro del siguiente listado: salud, limpieza, alimentacion, transporte, salidas, ropa, plantas, arreglos casa, vacaciones. Nota: Si se recibe una palabra con errores ortográficos o con tilde (por ejemplo, alimentación), esta debe normalizarse eliminando las tildes y considerarse como alimentacion, a fin de coincidir con las categorías predefinidas. El objetivo es asegurar una correcta categorización aunque la palabra no esté escrita con exactitud ortográfica.
 
-Devuelve solo un JSON con las claves: "tipo" (texto gasto o ingreso), "monto" (número), "categoria" (texto exacto del listado) y . Nada más.
+Devuelve solo un JSON con las claves: "tipo" (texto gasto o ingreso), "monto" (número), "categoria" (texto exacto del listado). Nada más.
 Texto: "{texto_usuario}"
 """
 
@@ -73,17 +74,28 @@ Texto: "{texto_usuario}"
         logger.exception("❌ Error en OpenRouter:")
         return {"error": str(e), "raw": content if 'content' in locals() else ""}
 
-# === Guardar en Mongo ===
+# === Guardar en Mongo y retornar _id ===
 def guardar_movimiento(chat_id, tipo, monto, categoria, mensaje_original):
-    movimientos.insert_one({
+    doc = {
         "chat_id": chat_id,
         "tipo": tipo,
         "monto": monto,
         "categoria": categoria,
         "mensaje_original": mensaje_original,
         "fecha": datetime.utcnow()
-    })
-    logger.info(f"💾 Guardado: {tipo} S/ {monto} en {categoria} ({chat_id})")
+    }
+    result = movimientos.insert_one(doc)
+    logger.info(f"💾 Guardado: {tipo} S/ {monto} en {categoria} ({chat_id}) -> ID: {result.inserted_id}")
+    return result.inserted_id
+
+# === Eliminar movimiento por ID ===
+def eliminar_movimiento_por_id(doc_id, chat_id):
+    try:
+        result = movimientos.delete_one({"_id": ObjectId(doc_id), "chat_id": chat_id})
+        return result.deleted_count > 0
+    except Exception as e:
+        logger.exception("❌ Error al eliminar movimiento:")
+        return False
 
 def obtener_saldo(categoria, chat_id):
     pipeline = [
@@ -108,7 +120,8 @@ def obtener_reporte_general(chat_id):
         saldos.setdefault(cat, {"ingreso": 0, "gasto": 0})
         saldos[cat][tipo] += r["total"]
 
-    mensaje = "📊 *Reporte general de categorías:*\n"
+    mensaje = "📊 *Reporte general de categorías:*
+"
     for cat, vals in saldos.items():
         saldo = vals["ingreso"] - vals["gasto"]
         mensaje += f"• {cat}: S/ {saldo:.2f}\n"
@@ -116,7 +129,6 @@ def obtener_reporte_general(chat_id):
     mensaje += f"\n[📄 Ver reporte en Google Sheets]({GOOGLE_SHEET_URL})"
     return mensaje
 
-# === Rutas ===
 @app.get("/")
 async def root():
     return {"message": "Bot activo con MongoDB y OpenRouter ✅"}
@@ -133,12 +145,22 @@ async def telegram_webhook(req: Request):
         if not text:
             return {"ok": True}
 
-        if text.lower() in ["reporte", "reporte general", "todo"]:
+        lower_text = text.lower()
+
+        if lower_text.startswith("eliminar "):
+            doc_id = text.replace("eliminar", "").strip()
+            if eliminar_movimiento_por_id(doc_id, chat_id):
+                msg = f"🗑️ Movimiento con ID `{doc_id}` eliminado correctamente."
+            else:
+                msg = f"❌ No se pudo eliminar el movimiento con ID `{doc_id}`. Verifica que sea correcto."
+
+        elif lower_text in ["reporte", "reporte general", "todo"]:
             msg = obtener_reporte_general(chat_id)
-        elif text.lower().startswith("reporte de "):
-            categoria = text.lower().replace("reporte de ", "").strip()
+
+        elif lower_text.startswith("reporte de "):
+            categoria = lower_text.replace("reporte de ", "").strip()
             if categoria not in CATEGORIAS_VALIDAS:
-                msg = f"❌ Categoría inválida. Usa:\n" + "\n".join(f"- {c}" for c in CATEGORIAS_VALIDAS)
+                msg = "❌ Categoría inválida. Usa:\n" + "\n".join(f"- {c}" for c in CATEGORIAS_VALIDAS)
             else:
                 saldo = obtener_saldo(categoria, chat_id)
                 msg = (
@@ -146,6 +168,7 @@ async def telegram_webhook(req: Request):
                     f"S/ {saldo:.2f}\n"
                     f"\n[📄 Ver reporte en Google Sheets]({GOOGLE_SHEET_URL})"
                 )
+
         else:
             resultado = procesar_con_openrouter(text)
             if "error" in resultado or resultado.get("categoria") not in CATEGORIAS_VALIDAS:
@@ -156,15 +179,19 @@ async def telegram_webhook(req: Request):
                 )
             else:
                 monto = resultado["monto"]
-                categoria = resultado["categoria"]
-                tipo = resultado["tipo"]
-                guardar_movimiento(chat_id, tipo, abs(monto), categoria, text)
-                saldo = obtener_saldo(categoria, chat_id)
-                msg = (
-                    f"✅ {tipo.title()} de S/ {abs(monto):.2f} registrado en '{categoria}'.\n"
-                    f"💰 Saldo actual: S/ {saldo:.2f}\n"
-                    f"\n[📄 Ver reporte en Google Sheets]({GOOGLE_SHEET_URL})"
-                )
+                if monto == 0:
+                    msg = "⚠️ El monto no puede ser 0."
+                else:
+                    categoria = resultado["categoria"]
+                    tipo = resultado["tipo"]
+                    doc_id = guardar_movimiento(chat_id, tipo, abs(monto), categoria, text)
+                    saldo = obtener_saldo(categoria, chat_id)
+                    msg = (
+                        f"✅ {tipo.title()} de S/ {abs(monto):.2f} registrado en '{categoria}'.\n"
+                        f"🆔 ID: `{doc_id}`\n"
+                        f"💰 Saldo actual: S/ {saldo:.2f}\n"
+                        f"\n[📄 Ver reporte en Google Sheets]({GOOGLE_SHEET_URL})"
+                    )
 
         httpx.post(f"{BASE_URL}/sendMessage", json={
             "chat_id": chat_id,
@@ -172,6 +199,7 @@ async def telegram_webhook(req: Request):
             "parse_mode": "Markdown",
             "disable_web_page_preview": True
         })
+
         return {"ok": True}
 
     except Exception as e:
