@@ -44,9 +44,14 @@ Eres un asistente que interpreta mensajes financieros enviados por usuarios en l
 A partir del mensaje del usuario, devuelve un JSON con tres claves: "tipo", "monto" y "categoria".
 
 Reglas:
-- "tipo" puede ser: "gasto", "ingreso", "reporte", "info", "eliminar".
-- "monto": número positivo. Puede ser 0 si no aplica.
-- "categoria": salud, limpieza, alimentacion, transporte, salidas, ropa, plantas, arreglos casa, vacaciones. O "" si no aplica.
+- "tipo" puede ser uno de los siguientes valores:
+    • "gasto": si el mensaje describe un gasto. (Ej: "gasté", "pagué", "compré"). Tambien es el valor por defecto si no se identifica otro tipo o no se da mayor detalle.
+    • "ingreso": si el mensaje describe un ingreso, ahorro o cualquier sinonimo de agregar. (Ej: "ahorré", "guardé", "recibí").
+    • "reporte": si el mensaje solicita un resumen, reporte o saldo de alguna categoría o general.
+    • "info": si el usuario pide ayuda, ejemplos o funcionamiento del bot.
+    • "eliminar": si el usuario desea borrar un movimiento por su ID.
+- "monto": número positivo extraído del texto. Si el tipo es "reporte", "info" o "eliminar", debe colocarse como 0.
+- "categoria": debe ser una de las siguientes (sin tildes ni errores ortográficos): salud, limpieza, alimentacion, transporte, salidas, ropa, plantas, arreglos casa, vacaciones. Si el texto no menciona una categoría válida o no aplica (como en "info" o "eliminar"), puede ir como cadena vacía "".
 
 Ejemplo:
 {{"tipo": "gasto", "monto": 25, "categoria": "transporte"}}
