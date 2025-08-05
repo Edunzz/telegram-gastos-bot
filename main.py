@@ -133,6 +133,12 @@ def obtener_reporte_general(chat_id):
     mensaje += f"\n[📄 Ver reporte en Google Sheets]({GOOGLE_SHEET_URL})"
     return mensaje
 
+
+# === Rutas ===
+@app.get("/")
+async def root():
+    return {"message": "Bot activo con MongoDB y OpenRouter ✅"}
+
 # === Webhook ===
 @app.post(f"/{TOKEN}")
 async def telegram_webhook(req: Request):
