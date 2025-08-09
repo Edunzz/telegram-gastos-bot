@@ -1,8 +1,3 @@
-# README — `main-multisala.py` (multi-tenant con “salas/grupos” + Excel)
-
-## 🚀 ¿Por qué esta versión?
-Para **masificar** sin mezclar datos. Crea **grupos (salas/tenants)** con un **código** para invitar a tu pareja/equipo. Cada grupo tiene su propio libro de gastos, reportes y exportación **a Excel**. Un solo despliegue, infinitos grupos.
-
 ## 🧠 ¿Qué hace?
 - Interpreta mensajes en lenguaje natural (vía OpenRouter) y registra **gastos/ingresos** en MongoDB.
 - **Onboarding automático**: primer mensaje pide *crear* o *unir* grupo.
