@@ -103,9 +103,12 @@ def eliminar_movimiento_por_id(doc_id, chat_id):
     except:
         return False
 
-def obtener_saldo(categoria, chat_id):
+def obtener_saldo(categoria, chat_id=None):
+    """
+    Saldo GLOBAL por categoría (sin filtrar por chat_id).
+    """
     pipeline = [
-        {"$match": {"chat_id": chat_id, "categoria": categoria}},
+        {"$match": {"categoria": categoria}},
         {"$group": {"_id": "$tipo", "total": {"$sum": "$monto"}}}
     ]
     result = list(movimientos.aggregate(pipeline))
@@ -113,12 +116,15 @@ def obtener_saldo(categoria, chat_id):
     gastos = sum(r["total"] for r in result if r["_id"] == "gasto")
     return ingresos - gastos
 
-def obtener_reporte_general(chat_id):
+def obtener_reporte_general(chat_id=None):
+    """
+    Reporte GLOBAL por categorías (sin filtrar por chat_id).
+    """
     pipeline = [
-        {"$match": {"chat_id": chat_id}},
         {"$group": {"_id": {"categoria": "$categoria", "tipo": "$tipo"}, "total": {"$sum": "$monto"}}}
     ]
     result = list(movimientos.aggregate(pipeline))
+
     saldos = {}
     for r in result:
         cat = r["_id"]["categoria"]
@@ -129,7 +135,7 @@ def obtener_reporte_general(chat_id):
     mensaje = "📊 *Reporte general de categorías:*\n"
     for cat, vals in saldos.items():
         saldo = vals["ingreso"] - vals["gasto"]
-        mensaje += f"• {cat}: S/ {saldo:.2f}\n"
+        mensaje += f"• {cat if cat else '(sin categoría)'}: S/ {saldo:.2f}\n"
     mensaje += f"\n[📄 Ver reporte en Google Sheets]({GOOGLE_SHEET_URL})"
     return mensaje
 
