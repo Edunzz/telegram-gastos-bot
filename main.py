@@ -28,7 +28,7 @@ GOOGLE_SHEET_URL = os.getenv("GOOGLE_SHEET_URL")
 
 # === Categorías válidas ===
 CATEGORIAS_VALIDAS = [
-    "salud", "limpieza", "alimentacion", "transporte",
+    "salud", "skincare", "limpieza", "alimentacion", "transporte",
     "salidas", "ropa", "plantas", "arreglos casa", "vacaciones"
 ]
 
@@ -51,7 +51,7 @@ Reglas:
     • "info": si el usuario pide ayuda, ejemplos o funcionamiento del bot.
     • "eliminar": si el usuario desea borrar un movimiento por su ID.
 - "monto": número positivo extraído del texto. Si el tipo es "reporte", "info" o "eliminar", debe colocarse como 0.
-- "categoria": debe ser una de las siguientes (sin tildes ni errores ortográficos): salud, limpieza, alimentacion, transporte, salidas, ropa, plantas, arreglos casa, vacaciones. Si el texto no menciona una categoría válida o no aplica (como en "info" o "eliminar"), puede ir como cadena vacía "".
+- "categoria": debe ser una de las siguientes (sin tildes ni errores ortográficos): salud, skincare, limpieza, alimentacion, transporte, salidas, ropa, plantas, arreglos casa, vacaciones. Si el texto no menciona una categoría válida o no aplica (como en "info" o "eliminar"), puede ir como cadena vacía "".
 
 Ejemplo:
 {{"tipo": "gasto", "monto": 25, "categoria": "transporte"}}
