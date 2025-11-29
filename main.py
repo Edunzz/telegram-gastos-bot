@@ -71,10 +71,15 @@ def procesar_con_openrouter(texto_usuario: str):
         "messages": [{"role": "user", "content": generar_prompt(texto_usuario)}]
     }
     try:
-        response = httpx.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=body, timeout=30)
+        response = httpx.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=body,
+            timeout=30
+        )
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
-        match = re.search(r'\{.*?\}', content, re.DOTALL)
+        match = re.search(r"\{.*?\}", content, re.DOTALL)
         if match:
             return json.loads(match.group())
         else:
@@ -113,8 +118,7 @@ def obtener_saldo(categoria, chat_id=None):
     ]
     result = list(movimientos.aggregate(pipeline))
     ingresos = sum(r["total"] for r in result if r["_id"] == "ingreso")
-    gastos = sum(r["total"] for r in result if r["_id"] == "gasto"]
-    )
+    gastos = sum(r["total"] for r in result if r["_id"] == "gasto")
     return ingresos - gastos
 
 def obtener_reporte_general(chat_id=None):
@@ -152,7 +156,7 @@ async def telegram_webhook(req: Request):
     body = await req.json()
     logger.info(f"Update recibido: {body}")
 
-    # 🔹 NUEVO: soportar updates sin 'message' y no romper
+    # Soportar updates sin 'message' y no romper
     message = body.get("message") or body.get("edited_message") or body.get("channel_post")
 
     if not message:
@@ -161,14 +165,13 @@ async def telegram_webhook(req: Request):
 
     chat_id = message["chat"]["id"]
 
-    # 🔹 NUEVO: manejar cuando no hay texto (fotos, stickers, etc.)
     text = message.get("text", "")
     if not isinstance(text, str):
         text = ""
     text = text.strip()
 
     if not text:
-        # Puedes cambiar este mensaje o simplemente ignorar
+        # Si mandan sticker/foto/etc
         msg = "Solo puedo procesar mensajes de texto por ahora 😊"
         httpx.post(f"{BASE_URL}/sendMessage", json={
             "chat_id": chat_id,
@@ -176,10 +179,10 @@ async def telegram_webhook(req: Request):
         })
         return {"ok": True}
 
-    # === Tu lógica original desde aquí ===
     resultado = procesar_con_openrouter(text)
 
     if "error" in resultado:
+        # Tu mensaje original
         msg = "⚠️ No pude interpretar tu mensaje. Intenta de nuevo."
     else:
         tipo = resultado.get("tipo")
@@ -204,7 +207,10 @@ async def telegram_webhook(req: Request):
         elif tipo == "reporte":
             if categoria in CATEGORIAS_VALIDAS:
                 saldo = obtener_saldo(categoria, chat_id)
-                msg = f"💼 *Saldo en '{categoria}':*\nS/ {saldo:.2f}\n\n[📄 Ver reporte en Google Sheets]({GOOGLE_SHEET_URL})"
+                msg = (
+                    f"💼 *Saldo en '{categoria}':*\n"
+                    f"S/ {saldo:.2f}\n\n[📄 Ver reporte en Google Sheets]({GOOGLE_SHEET_URL})"
+                )
             else:
                 msg = obtener_reporte_general(chat_id)
         elif tipo in ["gasto", "ingreso"] and categoria in CATEGORIAS_VALIDAS and monto > 0:
