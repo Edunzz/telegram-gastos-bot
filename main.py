@@ -113,7 +113,8 @@ def obtener_saldo(categoria, chat_id=None):
     ]
     result = list(movimientos.aggregate(pipeline))
     ingresos = sum(r["total"] for r in result if r["_id"] == "ingreso")
-    gastos = sum(r["total"] for r in result if r["_id"] == "gasto")
+    gastos = sum(r["total"] for r in result if r["_id"] == "gasto"]
+    )
     return ingresos - gastos
 
 def obtener_reporte_general(chat_id=None):
@@ -149,8 +150,33 @@ async def root():
 @app.post(f"/{TOKEN}")
 async def telegram_webhook(req: Request):
     body = await req.json()
-    chat_id = body["message"]["chat"]["id"]
-    text = body["message"].get("text", "").strip()
+    logger.info(f"Update recibido: {body}")
+
+    # 🔹 NUEVO: soportar updates sin 'message' y no romper
+    message = body.get("message") or body.get("edited_message") or body.get("channel_post")
+
+    if not message:
+        logger.info("Update sin 'message'/'edited_message'/'channel_post'. Se ignora.")
+        return {"ok": True}
+
+    chat_id = message["chat"]["id"]
+
+    # 🔹 NUEVO: manejar cuando no hay texto (fotos, stickers, etc.)
+    text = message.get("text", "")
+    if not isinstance(text, str):
+        text = ""
+    text = text.strip()
+
+    if not text:
+        # Puedes cambiar este mensaje o simplemente ignorar
+        msg = "Solo puedo procesar mensajes de texto por ahora 😊"
+        httpx.post(f"{BASE_URL}/sendMessage", json={
+            "chat_id": chat_id,
+            "text": msg
+        })
+        return {"ok": True}
+
+    # === Tu lógica original desde aquí ===
     resultado = procesar_con_openrouter(text)
 
     if "error" in resultado:
