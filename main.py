@@ -64,12 +64,14 @@ def procesar_con_openrouter(texto_usuario: str):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://tubot.com"
+        "HTTP-Referer": "https://tubot.com",
+        "X-OpenRouter-Title": "Telegram Gastos Bot",
     }
     body = {
         "model": OPENROUTER_MODEL,
         "messages": [{"role": "user", "content": generar_prompt(texto_usuario)}]
     }
+
     try:
         response = httpx.post(
             "https://openrouter.ai/api/v1/chat/completions",
@@ -77,13 +79,33 @@ def procesar_con_openrouter(texto_usuario: str):
             json=body,
             timeout=30
         )
+
+        # === LOG EXPLICITO SI FALLA (400, 401, etc) ===
+        if response.status_code >= 400:
+            safe_headers = dict(headers)
+            if "Authorization" in safe_headers:
+                safe_headers["Authorization"] = "Bearer ***"
+
+            logger.error("❌ OpenRouter ERROR %s", response.status_code)
+            logger.error("🔎 Response text: %s", response.text)
+            logger.error("🔎 Request model: %s", OPENROUTER_MODEL)
+            logger.error("🔎 Request headers: %s", safe_headers)
+            logger.error("🔎 Request body: %s", json.dumps(body, ensure_ascii=False))
+            # intenta json del error (si viene)
+            try:
+                logger.error("🔎 Response json: %s", json.dumps(response.json(), ensure_ascii=False))
+            except Exception:
+                pass
+
         response.raise_for_status()
+
         content = response.json()["choices"][0]["message"]["content"]
         match = re.search(r"\{.*?\}", content, re.DOTALL)
         if match:
             return json.loads(match.group())
         else:
             raise ValueError("❌ No se encontró JSON válido en la respuesta.")
+
     except Exception as e:
         logger.exception("❌ Error en OpenRouter:")
         return {"error": str(e)}
