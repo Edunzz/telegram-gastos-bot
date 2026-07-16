@@ -56,6 +56,19 @@ def _normalizar(texto: str) -> str:
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
+def escape_markdown(texto: str) -> str:
+    """
+    Escapa caracteres especiales de Markdown legacy (_ * ` [) para evitar
+    errores 400 'can't parse entities' al insertar texto dinámico (nombres de
+    categoría, mensajes originales del usuario, etc.) en mensajes formateados.
+    """
+    if not isinstance(texto, str):
+        texto = str(texto)
+    for ch in ("_", "*", "`", "["):
+        texto = texto.replace(ch, "\\" + ch)
+    return texto
+
+
 def cargar_categorias() -> list:
     """Devuelve la lista unificada de categorías (base + persistidas en MongoDB)."""
     extras = [doc["nombre"] for doc in col_categorias.find({}, {"_id": 0, "nombre": 1})]
@@ -218,7 +231,7 @@ def obtener_reporte_general(chat_id=None):
         saldo = vals["ingreso"] - vals["gasto"]
         signo = "🟢" if saldo >= 0 else "🔴"
         nombre = cat if cat else "(sin categoría)"
-        mensaje += f"{signo} *{nombre.title()}:* S/ {saldo:,.2f}\n"
+        mensaje += f"{signo} *{escape_markdown(nombre.title())}:* S/ {saldo:,.2f}\n"
     mensaje += "─────────────────────────"
     if GOOGLE_SHEET_URL:
         mensaje += f"\n\n[📄 Ver reporte en Google Sheets]({GOOGLE_SHEET_URL})"
@@ -238,10 +251,10 @@ def _agregar_categoria(nombre: str) -> tuple[bool, str]:
     norm_nuevo = _normalizar(nombre)
     for cat in todas:
         if _normalizar(cat) == norm_nuevo:
-            return False, f"⚠️ La categoría *'{cat}'* ya existe."
+            return False, f"⚠️ La categoría *'{escape_markdown(cat)}'* ya existe."
 
     col_categorias.insert_one({"nombre": nombre.lower(), "fecha": datetime.utcnow()})
-    return True, f"✅ Categoría *'{nombre}'* creada correctamente."
+    return True, f"✅ Categoría *'{escape_markdown(nombre)}'* creada correctamente."
 
 
 def _parsear_n_movimientos(texto: str, default: int = 5) -> int:
@@ -308,15 +321,17 @@ async def telegram_webhook(req: Request):
         categoria = (resultado.get("categoria", "") or "").strip()
 
         if tipo == "info":
-            cats_lista = "\n".join(f"  • {c}" for c in sorted(CATEGORIAS_VALIDAS, key=_normalizar))
+            cats_lista = "\n".join(
+                f"  • {escape_markdown(c)}" for c in sorted(CATEGORIAS_VALIDAS, key=_normalizar)
+            )
             msg = (
                 "ℹ️ *Opciones disponibles:*\n\n"
-                "💸 Registrar gasto: _'gasté 50 en transporte'_\n"
-                "💰 Registrar ingreso: _'ahorré 20 para salud'_\n"
-                "📊 Reporte general: _'reporte general'_\n"
-                "🗂️ Reporte categoría: _'reporte de ropa'_ o _'reporte ropa 10'_\n"
-                "➕ Nueva categoría: _'/nueva_categoria <nombre>'_\n"
-                "🗑️ Eliminar: _'eliminar <ID>'_\n\n"
+                "💸 Registrar gasto: `gasté 50 en transporte`\n"
+                "💰 Registrar ingreso: `ahorré 20 para salud`\n"
+                "📊 Reporte general: `reporte general`\n"
+                "🗂️ Reporte categoría: `reporte de ropa` o `reporte ropa 10`\n"
+                "➕ Nueva categoría: `/nueva_categoria <nombre>`\n"
+                "🗑️ Eliminar: `eliminar <ID>`\n\n"
                 f"📋 *Categorías válidas:*\n{cats_lista}"
             )
 
@@ -334,7 +349,7 @@ async def telegram_webhook(req: Request):
                 ultimos = obtener_movimientos_categoria(categoria, n)
 
                 msg = (
-                    f"🗂️ *Categoría: {categoria.title()}*\n"
+                    f"🗂️ *Categoría: {escape_markdown(categoria.title())}*\n"
                     f"─────────────────────────\n"
                     f"💰 *Saldo total:* S/ {saldo:,.2f}\n"
                     f"─────────────────────────\n"
@@ -355,7 +370,7 @@ async def telegram_webhook(req: Request):
                         msg += (
                             f"\n{emoji_tipo} *S/ {monto_mov:,.2f}* — {tipo_mov}\n"
                             f"  📅 {fecha_str}\n"
-                            f"  📝 _{concepto}_\n"
+                            f"  📝 _{escape_markdown(concepto)}_\n"
                         )
                 else:
                     msg += "_No hay movimientos registrados._\n"
@@ -373,7 +388,7 @@ async def telegram_webhook(req: Request):
             msg = (
                 f"{emoji_op} *{tipo.title()} registrado*\n"
                 f"─────────────────────────\n"
-                f"🗂️ Categoría: *{categoria.title()}*\n"
+                f"🗂️ Categoría: *{escape_markdown(categoria.title())}*\n"
                 f"💵 Monto: *S/ {float(monto):,.2f}*\n"
                 f"🆔 ID: `{doc_id}`\n"
                 f"─────────────────────────\n"
